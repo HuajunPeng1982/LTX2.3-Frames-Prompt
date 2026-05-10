@@ -47,7 +47,7 @@ class LTX23FramesPrompt:
             import traceback
             err = f"ERROR: Node execution failed.\n{type(exc).__name__}: {exc}"
             status = traceback.format_exc()
-            return (err, status)
+            return {"ui": {"prompts": [err], "status": [status]}, "result": (err, status)}
 
     def _generate(self, **kwargs):
         # Collect all connected image inputs in order
@@ -70,12 +70,13 @@ class LTX23FramesPrompt:
                     continue
 
         if len(images) < 2:
+            output = f"ERROR: At least 2 images required (found {len(images)})."
             status = (
                 f"[开始] LTX2.3 Frames Prompt 生成\n"
                 f"[输入] 图片数量: {len(images)}, 相邻帧对: {len(images) - 1}\n"
                 f"[错误] 至少需要 2 张图片 (实际连接: {len(images)})"
             )
-            return (f"ERROR: At least 2 images required (found {len(images)}).", status)
+            return {"ui": {"prompts": [output], "status": [status]}, "result": (output, status)}
 
         prompt_format = kwargs.get("prompt_format", "")
         user_text = kwargs.get("user_text", "")
@@ -92,4 +93,4 @@ class LTX23FramesPrompt:
             model_name=model_name,
         )
 
-        return (output, status)
+        return {"ui": {"prompts": [output], "status": [status]}, "result": (output, status)}

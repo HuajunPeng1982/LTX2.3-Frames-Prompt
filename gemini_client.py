@@ -113,7 +113,7 @@ def generate_prompts(
     user_text: str,
     api_key: str,
     base_url: str,
-    model_name: str = "gemini-2.5-flash",
+    model_name: str = "gemini-3.1-pro-preview",
 ) -> tuple[str, str]:
     """Call Gemini to generate frame transition prompts.
 

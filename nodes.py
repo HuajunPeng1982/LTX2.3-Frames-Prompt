@@ -40,6 +40,15 @@ class LTX23FramesPrompt:
     )
 
     def generate(self, **kwargs):
+        try:
+            return self._generate(**kwargs)
+        except Exception as exc:
+            import traceback
+            err = f"ERROR: Node execution failed.\n{type(exc).__name__}: {exc}"
+            status = traceback.format_exc()
+            return (err, status)
+
+    def _generate(self, **kwargs):
         # Collect all connected image inputs in order
         images: list[torch.Tensor] = []
         image_keys = sorted(

@@ -2,11 +2,14 @@
 
 import time
 import random
+import json
+import re as _re
+import base64
+import io
 
 import torch
 import numpy as np
 from PIL import Image
-import io
 
 from pydantic import BaseModel, Field
 
@@ -28,13 +31,13 @@ class FramePromptList(BaseModel):
 # Image conversion
 # ---------------------------------------------------------------------------
 
-def _tensor_to_image_bytes(tensor: torch.Tensor) -> bytes:
-    """Convert a ComfyUI IMAGE tensor (H, W, C) float32 [0,1] to JPEG bytes."""
+def _tensor_to_base64(tensor: torch.Tensor) -> str:
+    """Convert a ComfyUI IMAGE tensor (H, W, C) float32 [0,1] to base64 JPEG."""
     arr = (tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
     img = Image.fromarray(arr, mode="RGB")
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=92)
-    return buf.getvalue()
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 # ---------------------------------------------------------------------------
@@ -55,19 +58,14 @@ SYSTEM_INSTRUCTION = (
 )
 
 
-def build_contents(
-    images: list[torch.Tensor],
+def build_prompt_text(
+    image_count: int,
     prompt_format: str,
     user_text: str,
-) -> list:
-    """Build the Gemini API contents list.
+) -> str:
+    """Build the full text prompt (without images — images are sent separately)."""
+    parts: list[str] = []
 
-    Sends all images in one call with clear pair-boundary markers so the model
-    can return one FramePrompt per adjacent pair.
-    """
-    parts: list = []
-
-    # System-level context from the formatted prompt
     if prompt_format.strip():
         parts.append(f"[System Context]\n{prompt_format.strip()}\n")
 
@@ -76,9 +74,8 @@ def build_contents(
     if user_text.strip():
         parts.append(f"\n[User Creative Direction]\n{user_text.strip()}\n")
 
-    # Number the images and declare the pairs to analyse
     pair_descriptions = []
-    for i in range(len(images) - 1):
+    for i in range(image_count - 1):
         pair_descriptions.append(f"Pair {i + 1}: Image {i + 1} -> Image {i + 2}")
 
     parts.append(
@@ -87,36 +84,15 @@ def build_contents(
     )
     parts.append(
         "\nReturn your response as a JSON object with this exact structure, no other text:\n"
-        '```json\n'
-        '{\n'
-        '  "frames": [\n'
-        '    {\n'
-        '      "duration_seconds": 4.0,\n'
-        '      "prompt_cn": "中文提示词内容",\n'
-        '      "prompt_en": "English prompt content"\n'
-        '    }\n'
-        '  ]\n'
-        '}\n'
-        '```\n'
+        '{"frames": [{"duration_seconds": 4.0, "prompt_cn": "...", "prompt_en": "..."}]}\n'
         "Important: return ONLY the JSON, no markdown fences, no explanation."
     )
-    parts.append("\nBelow are the images in order (Image 1, Image 2, ...):")
 
-    # Append images inline
-    from google.genai import types as genai_types
-
-    for idx, img_tensor in enumerate(images):
-        img_bytes = _tensor_to_image_bytes(img_tensor)
-        parts.append(f"\n--- Image {idx + 1} ---")
-        parts.append(
-            genai_types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-        )
-
-    return parts
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
-# Main API call
+# Main API call (using requests directly, not google-genai SDK)
 # ---------------------------------------------------------------------------
 
 def generate_prompts(
@@ -127,10 +103,9 @@ def generate_prompts(
     base_url: str,
     model_name: str = "gemini-3.1-pro-preview",
 ) -> tuple[str, str]:
-    """Call Gemini to generate frame transition prompts.
+    """Call Gemini API to generate frame transition prompts.
 
-    Returns (output_text, status_text) — output_text is the formatted prompts
-    (or error), status_text is the process log.
+    Returns (output_text, status_text).
     """
     log: list[str] = []
 
@@ -149,85 +124,100 @@ def generate_prompts(
     log_add(f"[地址] {base_url.strip()}")
 
     try:
-        from google import genai
-        from google.genai import types as genai_types
+        import requests
     except ImportError:
-        err = "ERROR: google-genai package not installed. Run: pip install google-genai"
+        err = "ERROR: requests package not installed. Run: pip install requests"
         log_add(f"[错误] {err}")
         return (err, "\n".join(log))
 
-    log_add("[连接] 正在创建 API 客户端...")
-    client = genai.Client(
-        api_key=api_key.strip(),
-        http_options={
-            "base_url": base_url.strip(),
-            "api_version": "",
-            "timeout": 360000,  # 6 minutes in milliseconds
-        },
-    )
-
     log_add("[构建] 正在组织提示词和图片...")
-    contents = build_contents(images, prompt_format, user_text)
+    text_prompt = build_prompt_text(len(images), prompt_format, user_text)
 
-    config = genai_types.GenerateContentConfig(
-        temperature=0.4,
-        max_output_tokens=4096,
-    )
+    # Build OpenAI-compatible content array: text + images as data URIs
+    content: list[dict] = [{"type": "text", "text": text_prompt}]
+    for idx, img_tensor in enumerate(images):
+        b64 = _tensor_to_base64(img_tensor)
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+        })
 
-    # Retry with exponential backoff
+    request_body = {
+        "model": model_name.strip(),
+        "messages": [
+            {"role": "user", "content": content},
+        ],
+        "temperature": 0.4,
+        "max_tokens": 4096,
+    }
+
+    base = base_url.strip().rstrip("/")
+    endpoint = f"{base}/v1/chat/completions"
+
+    log_add(f"[请求] 正在调用 API (超时: 360s, 端点: {endpoint})...")
+
     max_retries = 3
     for attempt in range(max_retries):
         attempt_num = attempt + 1
         if attempt > 0:
             log_add(f"[重试] 第 {attempt_num}/{max_retries} 次尝试...")
-        else:
-            log_add(f"[请求] 正在调用 Gemini API (超时: 360s)...")
+
         try:
-            response = client.models.generate_content(
-                model=model_name.strip(),
-                contents=contents,
-                config=config,
+            resp = requests.post(
+                endpoint,
+                json=request_body,
+                headers={
+                    "Authorization": f"Bearer {api_key.strip()}",
+                    "Content-Type": "application/json",
+                },
+                timeout=360,
             )
 
-            log_add("[响应] API 调用成功，正在解析结果...")
+            log_add(f"[响应] HTTP {resp.status_code}, 长度: {len(resp.text)} 字符")
 
-            # Try structured output first
+            if resp.status_code != 200:
+                log_add(f"[调试] 响应内容前300字符: {resp.text[:300]}")
+                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:500]}")
+
+            data = resp.json()
+            log_add(f"[调试] 响应JSON keys: {list(data.keys())}")
+
+            # Extract the assistant's reply
+            raw_text = ""
+            if "choices" in data and len(data["choices"]) > 0:
+                raw_text = data["choices"][0].get("message", {}).get("content", "")
+            elif "candidates" in data:  # Gemini native format fallback
+                raw_text = data["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "")
+
+            log_add(f"[调试] 提取文本长度: {len(raw_text)}, 前200字符: {raw_text[:200]}")
+
+            if not raw_text.strip():
+                raise RuntimeError("Model returned empty content.")
+
+            # Parse JSON from the response text
+            clean = raw_text.strip()
+            clean = _re.sub(r"^```(?:json)?\s*\n?", "", clean)
+            clean = _re.sub(r"\n?```\s*$", "", clean)
+
             try:
-                parsed: FramePromptList = response.parsed
-                if parsed is not None and parsed.frames:
-                    output = _format_output(parsed, len(images))
-                    log_add(f"[完成] 成功生成 {len(parsed.frames)} 个镜头提示词")
-                    return (output, "\n".join(log))
-            except Exception:
-                pass
+                data = json.loads(clean)
+            except json.JSONDecodeError:
+                # Try to find JSON object in the text
+                match = _re.search(r'\{[\s\S]*"frames"[\s\S]*\}', clean)
+                if match:
+                    data = json.loads(match.group())
+                else:
+                    log_add("[警告] 无法解析JSON，使用原始文本输出")
+                    return (raw_text, "\n".join(log))
 
-            # Fallback: try to parse response.text as JSON
-            raw = getattr(response, "text", "") or ""
-            log_add(f"[调试] 原始响应长度: {len(raw)} 字符, 前200字符: {raw[:200]}")
+            if "frames" not in data:
+                log_add("[警告] 响应缺少frames字段，使用原始文本")
+                return (raw_text, "\n".join(log))
 
-            if raw.strip():
-                try:
-                    import json
-                    import re as _re
-                    # Strip markdown code fences if present
-                    clean = raw.strip()
-                    clean = _re.sub(r"^```(?:json)?\s*\n?", "", clean)
-                    clean = _re.sub(r"\n?```\s*$", "", clean)
-                    data = json.loads(clean)
-                    if "frames" in data:
-                        parsed = FramePromptList.model_validate(data)
-                        output = _format_output(parsed, len(images))
-                        log_add(f"[完成] 从原始文本解析成功，{len(parsed.frames)} 个镜头")
-                        return (output, "\n".join(log))
-                except Exception as parse_exc:
-                    log_add(f"[调试] JSON解析失败: {parse_exc}")
-                # Last resort: return raw text as output
-                log_add("[警告] 无法按结构化格式解析，使用原始响应")
-                return (raw, "\n".join(log))
-
-            err = "ERROR: Model returned empty response."
-            log_add(f"[错误] {err}")
-            return (err, "\n".join(log))
+            parsed = FramePromptList.model_validate(data)
+            output = _format_output(parsed, len(images))
+            log_add(f"[完成] 成功生成 {len(parsed.frames)} 个镜头提示词")
+            return (output, "\n".join(log))
 
         except Exception as exc:
             log_add(f"[异常] {type(exc).__name__}: {exc}")

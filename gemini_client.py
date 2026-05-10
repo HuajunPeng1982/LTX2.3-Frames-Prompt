@@ -180,15 +180,38 @@ def generate_prompts(
             )
 
             log_add("[响应] API 调用成功，正在解析结果...")
-            parsed: FramePromptList = response.parsed  # type: ignore[assignment]
-            if parsed is None:
-                err = f"ERROR: Model returned empty or unparseable response.\nRaw: {getattr(response, 'text', 'N/A')}"
-                log_add(f"[错误] {err}")
-                return (err, "\n".join(log))
 
-            output = _format_output(parsed, len(images))
-            log_add(f"[完成] 成功生成 {len(parsed.frames)} 个镜头提示词")
-            return (output, "\n".join(log))
+            # Try structured output first
+            try:
+                parsed: FramePromptList = response.parsed
+                if parsed is not None and parsed.frames:
+                    output = _format_output(parsed, len(images))
+                    log_add(f"[完成] 成功生成 {len(parsed.frames)} 个镜头提示词")
+                    return (output, "\n".join(log))
+            except Exception:
+                pass
+
+            # Fallback: try to parse response.text as JSON
+            raw = getattr(response, "text", "") or ""
+            log_add(f"[调试] 原始响应前200字符: {raw[:200]}")
+            if raw.strip():
+                try:
+                    import json
+                    data = json.loads(raw)
+                    if "frames" in data:
+                        parsed = FramePromptList.model_validate(data)
+                        output = _format_output(parsed, len(images))
+                        log_add(f"[完成] 从原始文本解析成功，{len(parsed.frames)} 个镜头")
+                        return (output, "\n".join(log))
+                except Exception:
+                    pass
+                # Last resort: return raw text as output
+                log_add("[警告] 无法按结构化格式解析，使用原始响应")
+                return (raw, "\n".join(log))
+
+            err = "ERROR: Model returned empty response."
+            log_add(f"[错误] {err}")
+            return (err, "\n".join(log))
 
         except Exception as exc:
             log_add(f"[异常] {type(exc).__name__}: {exc}")

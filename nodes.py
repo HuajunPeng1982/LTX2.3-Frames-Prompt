@@ -20,7 +20,7 @@ class LTX23FramesPrompt:
             "prompt_format": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
             "user_text": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
             "api_key": ("STRING", {"default": "", "forceInput": True}),
-            "base_url": ("STRING", {"default": "https://generativelanguage.googleapis.com", "forceInput": True}),
+            "base_url": ("STRING", {"default": "https://ai.t8star.org", "forceInput": True}),
         }
         optional = {}
         for i in range(2, 17):
@@ -79,7 +79,7 @@ class LTX23FramesPrompt:
         prompt_format = kwargs.get("prompt_format", "")
         user_text = kwargs.get("user_text", "")
         api_key = kwargs.get("api_key", "")
-        base_url = kwargs.get("base_url", "https://generativelanguage.googleapis.com")
+        base_url = kwargs.get("base_url", "https://ai.t8star.org")
         model_name = kwargs.get("model_name", "gemini-2.5-flash")
 
         output, status = generate_prompts(

@@ -151,6 +151,7 @@ def generate_prompts(
             "base_url": base_url.strip(),
             "api_version": "",
             "timeout": 360000,  # 6 minutes in milliseconds
+            "follow_redirects": False,
         },
     )
 

@@ -32,6 +32,7 @@ class LTX23FramesPrompt:
     RETURN_NAMES = ("prompts", "status")
     FUNCTION = "generate"
     CATEGORY = "LTX2.3"
+    OUTPUT_NODE = True
     DESCRIPTION = (
         "Generate Chinese & English video prompts with suggested durations "
         "for LTX2.3 multi-frame generation. Analyses adjacent image pairs "

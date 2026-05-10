@@ -10,4 +10,3 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "LTX23FramesPrompt": "LTX2.3 Frames Prompt",
 }
 
-WEB_DIRECTORY = "js"

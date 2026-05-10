@@ -32,11 +32,11 @@ class LTX23FramesPrompt:
     RETURN_NAMES = ("prompts", "status")
     FUNCTION = "generate"
     CATEGORY = "LTX2.3"
-    OUTPUT_NODE = True
     DESCRIPTION = (
         "Generate Chinese & English video prompts with suggested durations "
         "for LTX2.3 multi-frame generation. Analyses adjacent image pairs "
-        "via Gemini API. Connect 2-16 images, formatted prompt, and user text."
+        "via Gemini API. Connect 2-16 images, formatted prompt, and user text. "
+        "Connect outputs to ShowText nodes to view results."
     )
 
     def generate(self, **kwargs):

@@ -17,15 +17,15 @@ class LTX23FramesPrompt:
     def INPUT_TYPES(cls):
         required = {
             "image_1": ("IMAGE",),
-            "prompt_format": ("STRING", {"multiline": True, "default": ""}),
-            "user_text": ("STRING", {"multiline": True, "default": ""}),
-            "api_key": ("STRING", {"default": ""}),
-            "base_url": ("STRING", {"default": "https://generativelanguage.googleapis.com"}),
+            "prompt_format": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+            "user_text": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+            "api_key": ("STRING", {"default": "", "forceInput": True}),
+            "base_url": ("STRING", {"default": "https://generativelanguage.googleapis.com", "forceInput": True}),
         }
         optional = {}
         for i in range(2, 17):
             optional[f"image_{i}"] = ("IMAGE",)
-        optional["model_name"] = ("STRING", {"default": "gemini-2.5-flash"})
+        optional["model_name"] = ("STRING", {"default": "gemini-2.5-flash", "forceInput": True})
         return {"required": required, "optional": optional}
 
     RETURN_TYPES = ("STRING", "STRING")

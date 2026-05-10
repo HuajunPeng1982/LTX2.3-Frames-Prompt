@@ -28,8 +28,8 @@ class LTX23FramesPrompt:
         optional["model_name"] = ("STRING", {"default": "gemini-2.5-flash"})
         return {"required": required, "optional": optional}
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("prompts",)
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("prompts", "status")
     FUNCTION = "generate"
     CATEGORY = "LTX2.3"
     OUTPUT_NODE = True
@@ -60,7 +60,12 @@ class LTX23FramesPrompt:
                     continue
 
         if len(images) < 2:
-            return (f"ERROR: At least 2 images required (found {len(images)}).",)
+            status = (
+                f"[开始] LTX2.3 Frames Prompt 生成\n"
+                f"[输入] 图片数量: {len(images)}, 相邻帧对: {len(images) - 1}\n"
+                f"[错误] 至少需要 2 张图片 (实际连接: {len(images)})"
+            )
+            return (f"ERROR: At least 2 images required (found {len(images)}).", status)
 
         prompt_format = kwargs.get("prompt_format", "")
         user_text = kwargs.get("user_text", "")
@@ -68,7 +73,7 @@ class LTX23FramesPrompt:
         base_url = kwargs.get("base_url", "https://generativelanguage.googleapis.com")
         model_name = kwargs.get("model_name", "gemini-2.5-flash")
 
-        result = generate_prompts(
+        output, status = generate_prompts(
             images=images,
             prompt_format=prompt_format,
             user_text=user_text,
@@ -77,4 +82,4 @@ class LTX23FramesPrompt:
             model_name=model_name,
         )
 
-        return (result,)
+        return (output, status)

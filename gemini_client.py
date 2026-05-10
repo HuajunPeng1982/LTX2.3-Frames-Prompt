@@ -156,7 +156,7 @@ def generate_prompts(
 
     log_add(f"[请求] 正在调用 API (超时: 360s, 端点: {endpoint})...")
 
-    max_retries = 3
+    max_retries = 5
     for attempt in range(max_retries):
         attempt_num = attempt + 1
         if attempt > 0:
@@ -171,9 +171,16 @@ def generate_prompts(
                     "Content-Type": "application/json",
                 },
                 timeout=360,
+                proxies={"http": None, "https": None},  # bypass system proxy
             )
 
             log_add(f"[响应] HTTP {resp.status_code}, 长度: {len(resp.text)} 字符")
+
+            if resp.status_code == 429:
+                log_add("[过载] 服务器限流(429)，等待更长时间后重试...")
+                delay = 10 + random.uniform(0, 5)
+                time.sleep(delay)
+                continue
 
             if resp.status_code != 200:
                 log_add(f"[调试] 响应内容前300字符: {resp.text[:300]}")

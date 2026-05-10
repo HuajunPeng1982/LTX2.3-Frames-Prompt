@@ -86,7 +86,19 @@ def build_contents(
         + "\n".join(pair_descriptions)
     )
     parts.append(
-        "\nReturn exactly one FramePrompt per pair in order, as a JSON array under 'frames'."
+        "\nReturn your response as a JSON object with this exact structure, no other text:\n"
+        '```json\n'
+        '{\n'
+        '  "frames": [\n'
+        '    {\n'
+        '      "duration_seconds": 4.0,\n'
+        '      "prompt_cn": "中文提示词内容",\n'
+        '      "prompt_en": "English prompt content"\n'
+        '    }\n'
+        '  ]\n'
+        '}\n'
+        '```\n'
+        "Important: return ONLY the JSON, no markdown fences, no explanation."
     )
     parts.append("\nBelow are the images in order (Image 1, Image 2, ...):")
 
@@ -158,8 +170,6 @@ def generate_prompts(
     contents = build_contents(images, prompt_format, user_text)
 
     config = genai_types.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=FramePromptList,
         temperature=0.4,
         max_output_tokens=4096,
     )
@@ -193,18 +203,24 @@ def generate_prompts(
 
             # Fallback: try to parse response.text as JSON
             raw = getattr(response, "text", "") or ""
-            log_add(f"[调试] 原始响应前200字符: {raw[:200]}")
+            log_add(f"[调试] 原始响应长度: {len(raw)} 字符, 前200字符: {raw[:200]}")
+
             if raw.strip():
                 try:
                     import json
-                    data = json.loads(raw)
+                    import re as _re
+                    # Strip markdown code fences if present
+                    clean = raw.strip()
+                    clean = _re.sub(r"^```(?:json)?\s*\n?", "", clean)
+                    clean = _re.sub(r"\n?```\s*$", "", clean)
+                    data = json.loads(clean)
                     if "frames" in data:
                         parsed = FramePromptList.model_validate(data)
                         output = _format_output(parsed, len(images))
                         log_add(f"[完成] 从原始文本解析成功，{len(parsed.frames)} 个镜头")
                         return (output, "\n".join(log))
-                except Exception:
-                    pass
+                except Exception as parse_exc:
+                    log_add(f"[调试] JSON解析失败: {parse_exc}")
                 # Last resort: return raw text as output
                 log_add("[警告] 无法按结构化格式解析，使用原始响应")
                 return (raw, "\n".join(log))

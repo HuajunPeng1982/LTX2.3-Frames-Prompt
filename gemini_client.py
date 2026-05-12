@@ -269,10 +269,17 @@ def _format_cn(result: FramePromptList) -> str:
 
 
 def _format_en(result: FramePromptList) -> str:
-    """Format English-only prompts for side-by-side display."""
+    """Format English-only prompts with cumulative time ranges."""
     lines: list[str] = []
+    cumulative = 0.0
     for i, fp in enumerate(result.frames):
-        lines.append(f"Shot {i + 1} (Image {i + 1}-Image {i + 2}) Duration: {fp.duration_seconds}s")
-        lines.append(fp.prompt_en)
-        lines.append("")
-    return "\n".join(lines).strip()
+        start = cumulative
+        end = cumulative + fp.duration_seconds
+        cumulative = end
+        start_str = f"{start:g}"
+        end_str = f"{end:g}"
+        line = f"{start_str}~{end_str}s(Shot {i + 1}):{fp.prompt_en}"
+        if i == len(result.frames) - 1:
+            line += "zhuanchang,"
+        lines.append(line)
+    return "\n".join(lines)

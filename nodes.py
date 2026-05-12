@@ -28,8 +28,8 @@ class LTX23FramesPrompt:
         optional["model_name"] = ("STRING", {"default": "gemini-3.1-pro-preview"})
         return {"required": required, "optional": optional}
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("prompts", "status")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("prompts", "status", "prompts_cn", "prompts_en")
     FUNCTION = "generate"
     CATEGORY = "LTX2.3"
     OUTPUT_NODE = True
@@ -47,7 +47,7 @@ class LTX23FramesPrompt:
             import traceback
             err = f"ERROR: Node execution failed.\n{type(exc).__name__}: {exc}"
             status = traceback.format_exc()
-            return {"ui": {"prompts": [err], "status": [status]}, "result": (err, status)}
+            return {"ui": {"prompts": [err], "status": [status], "prompts_cn": [err], "prompts_en": [err]}, "result": (err, status, err, err)}
 
     def _generate(self, **kwargs):
         # Collect all connected image inputs in order
@@ -76,7 +76,7 @@ class LTX23FramesPrompt:
                 f"[输入] 图片数量: {len(images)}, 相邻帧对: {len(images) - 1}\n"
                 f"[错误] 至少需要 2 张图片 (实际连接: {len(images)})"
             )
-            return {"ui": {"prompts": [output], "status": [status]}, "result": (output, status)}
+            return {"ui": {"prompts": [output], "status": [status], "prompts_cn": [output], "prompts_en": [output]}, "result": (output, status, output, output)}
 
         prompt_format = kwargs.get("prompt_format", "")
         user_text = kwargs.get("user_text", "")
@@ -84,7 +84,7 @@ class LTX23FramesPrompt:
         base_url = kwargs.get("base_url", "https://ai.t8star.org")
         model_name = kwargs.get("model_name", "gemini-3.1-pro-preview")
 
-        output, status = generate_prompts(
+        output, status, cn_output, en_output = generate_prompts(
             images=images,
             prompt_format=prompt_format,
             user_text=user_text,
@@ -93,4 +93,4 @@ class LTX23FramesPrompt:
             model_name=model_name,
         )
 
-        return {"ui": {"prompts": [output], "status": [status]}, "result": (output, status)}
+        return {"ui": {"prompts": [output], "status": [status], "prompts_cn": [cn_output], "prompts_en": [en_output]}, "result": (output, status, cn_output, en_output)}

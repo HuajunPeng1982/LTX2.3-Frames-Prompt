@@ -102,10 +102,10 @@ def generate_prompts(
     api_key: str,
     base_url: str,
     model_name: str = "gemini-3.1-pro-preview",
-) -> tuple[str, str]:
+) -> tuple[str, str, str, str]:
     """Call Gemini API to generate frame transition prompts.
 
-    Returns (output_text, status_text).
+    Returns (output_text, status_text, cn_text, en_text).
     """
     log: list[str] = []
 
@@ -118,7 +118,7 @@ def generate_prompts(
     if not api_key.strip():
         err = "ERROR: API key not set."
         log_add(f"[错误] {err}")
-        return (err, "\n".join(log))
+        return (err, "\n".join(log), "", "")
 
     log_add(f"[模型] {model_name.strip()}")
     log_add(f"[地址] {base_url.strip()}")
@@ -128,7 +128,7 @@ def generate_prompts(
     except ImportError:
         err = "ERROR: requests package not installed. Run: pip install requests"
         log_add(f"[错误] {err}")
-        return (err, "\n".join(log))
+        return (err, "\n".join(log), "", "")
 
     log_add("[构建] 正在组织提示词和图片...")
     text_prompt = build_prompt_text(len(images), prompt_format, user_text)
@@ -215,16 +215,18 @@ def generate_prompts(
                     data = json.loads(match.group())
                 else:
                     log_add("[警告] 无法解析JSON，使用原始文本输出")
-                    return (raw_text, "\n".join(log))
+                    return (raw_text, "\n".join(log), "", "")
 
             if "frames" not in data:
                 log_add("[警告] 响应缺少frames字段，使用原始文本")
-                return (raw_text, "\n".join(log))
+                return (raw_text, "\n".join(log), "", "")
 
             parsed = FramePromptList.model_validate(data)
             output = _format_output(parsed, len(images))
+            cn_output = _format_cn(parsed)
+            en_output = _format_en(parsed)
             log_add(f"[完成] 成功生成 {len(parsed.frames)} 个镜头提示词")
-            return (output, "\n".join(log))
+            return (output, "\n".join(log), cn_output, en_output)
 
         except Exception as exc:
             log_add(f"[异常] {type(exc).__name__}: {exc}")
@@ -234,11 +236,11 @@ def generate_prompts(
                 continue
             err = f"ERROR: API call failed after {max_retries} attempts.\n{type(exc).__name__}: {exc}"
             log_add(f"[失败] {err}")
-            return (err, "\n".join(log))
+            return (err, "\n".join(log), "", "")
 
     err = "ERROR: Unexpected error."
     log_add(f"[失败] {err}")
-    return (err, "\n".join(log))
+    return (err, "\n".join(log), "", "")
 
 
 # ---------------------------------------------------------------------------
@@ -246,11 +248,31 @@ def generate_prompts(
 # ---------------------------------------------------------------------------
 
 def _format_output(result: FramePromptList, image_count: int) -> str:
-    """Format structured response into the required display format."""
+    """Format structured response into the combined display format."""
     lines: list[str] = []
     for i, fp in enumerate(result.frames):
         lines.append(f"{i + 1}. 镜头{i + 1}（图片{i + 1}-图片{i + 2}）时长：{fp.duration_seconds}s")
         lines.append(f"   [中文] {fp.prompt_cn}")
         lines.append(f"   [EN]   {fp.prompt_en}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _format_cn(result: FramePromptList) -> str:
+    """Format Chinese-only prompts for side-by-side display."""
+    lines: list[str] = []
+    for i, fp in enumerate(result.frames):
+        lines.append(f"镜头{i + 1}（图片{i + 1}-图片{i + 2}）时长：{fp.duration_seconds}s")
+        lines.append(fp.prompt_cn)
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _format_en(result: FramePromptList) -> str:
+    """Format English-only prompts for side-by-side display."""
+    lines: list[str] = []
+    for i, fp in enumerate(result.frames):
+        lines.append(f"Shot {i + 1} (Image {i + 1}-Image {i + 2}) Duration: {fp.duration_seconds}s")
+        lines.append(fp.prompt_en)
         lines.append("")
     return "\n".join(lines).strip()

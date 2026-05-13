@@ -25,6 +25,8 @@ class FramePrompt(BaseModel):
 
 class FramePromptList(BaseModel):
     frames: list[FramePrompt] = Field(description="List of prompts, one per adjacent frame pair")
+    global_cn: str = Field(default="", description="Global Chinese prompt — consistent elements across the entire video")
+    global_en: str = Field(default="", description="Global English prompt — consistent elements across the entire video")
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +85,23 @@ def build_prompt_text(
         + "\n".join(pair_descriptions)
     )
     parts.append(
+        "\nIn addition to the per-frame prompts, also provide a GLOBAL prompt describing "
+        "what remains CONSISTENT across the ENTIRE video (NOT changing over time):\n"
+        "- Subject identity that persists throughout (e.g., 'a male eagle', 'a man wearing sunglasses')\n"
+        "- Overall environment type (e.g., 'urban night scene', 'cozy living room')\n"
+        "- Overall shot language (e.g., 'single continuous push-pull shot', 'cinematic handheld', 'slow dolly')\n"
+        "- Overall lighting mood (e.g., 'neon cool tones', 'warm golden light')\n\n"
+        "CRITICAL RULES for GLOBAL prompt:\n"
+        "1. Only describe what holds TRUE THROUGHOUT the ENTIRE video — no per-segment specifics\n"
+        "2. If subjects differ greatly across segments, keep only the highest-level common description\n"
+        "3. NO temporal/sequential words: first/then/next/finally/zoom in/zoom out/cut to/pan/tilt, etc.\n"
+        "4. NO specific actions or camera movements — only the overall shot style\n"
+        "5. Length: 15-40 Chinese characters for global_cn, 8-25 English words for global_en\n"
+    )
+    parts.append(
         "\nReturn your response as a JSON object with this exact structure, no other text:\n"
-        '{"frames": [{"duration_seconds": 4.0, "prompt_cn": "...", "prompt_en": "..."}]}\n'
+        '{"frames": [{"duration_seconds": 4.0, "prompt_cn": "...", "prompt_en": "..."}], '
+        '"global_cn": "...", "global_en": "..."}\n'
         "Important: return ONLY the JSON, no markdown fences, no explanation."
     )
 
@@ -102,10 +119,10 @@ def generate_prompts(
     api_key: str,
     base_url: str,
     model_name: str = "gemini-3.1-pro-preview",
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str, str, str, str]:
     """Call Gemini API to generate frame transition prompts.
 
-    Returns (output_text, status_text, cn_text, en_text).
+    Returns (output_text, status_text, cn_text, en_text, global_cn, global_en).
     """
     log: list[str] = []
 
@@ -118,7 +135,7 @@ def generate_prompts(
     if not api_key.strip():
         err = "ERROR: API key not set."
         log_add(f"[错误] {err}")
-        return (err, "\n".join(log), "", "")
+        return (err, "\n".join(log), "", "", "", "")
 
     log_add(f"[模型] {model_name.strip()}")
     log_add(f"[地址] {base_url.strip()}")
@@ -128,7 +145,7 @@ def generate_prompts(
     except ImportError:
         err = "ERROR: requests package not installed. Run: pip install requests"
         log_add(f"[错误] {err}")
-        return (err, "\n".join(log), "", "")
+        return (err, "\n".join(log), "", "", "", "")
 
     log_add("[构建] 正在组织提示词和图片...")
     text_prompt = build_prompt_text(len(images), prompt_format, user_text)
@@ -215,18 +232,20 @@ def generate_prompts(
                     data = json.loads(match.group())
                 else:
                     log_add("[警告] 无法解析JSON，使用原始文本输出")
-                    return (raw_text, "\n".join(log), "", "")
+                    return (raw_text, "\n".join(log), "", "", "", "")
 
             if "frames" not in data:
                 log_add("[警告] 响应缺少frames字段，使用原始文本")
-                return (raw_text, "\n".join(log), "", "")
+                return (raw_text, "\n".join(log), "", "", "", "")
 
             parsed = FramePromptList.model_validate(data)
             output = _format_output(parsed, len(images))
             cn_output = _format_cn(parsed)
             en_output = _format_en(parsed)
+            global_cn = _format_global_cn(parsed)
+            global_en = _format_global_en(parsed)
             log_add(f"[完成] 成功生成 {len(parsed.frames)} 个镜头提示词")
-            return (output, "\n".join(log), cn_output, en_output)
+            return (output, "\n".join(log), cn_output, en_output, global_cn, global_en)
 
         except Exception as exc:
             log_add(f"[异常] {type(exc).__name__}: {exc}")
@@ -236,11 +255,11 @@ def generate_prompts(
                 continue
             err = f"ERROR: API call failed after {max_retries} attempts.\n{type(exc).__name__}: {exc}"
             log_add(f"[失败] {err}")
-            return (err, "\n".join(log), "", "")
+            return (err, "\n".join(log), "", "", "", "")
 
     err = "ERROR: Unexpected error."
     log_add(f"[失败] {err}")
-    return (err, "\n".join(log), "", "")
+    return (err, "\n".join(log), "", "", "", "")
 
 
 # ---------------------------------------------------------------------------
@@ -276,10 +295,18 @@ def _format_en(result: FramePromptList) -> str:
         start = cumulative
         end = cumulative + fp.duration_seconds
         cumulative = end
-        start_str = f"{start:g}"
-        end_str = f"{end:g}"
-        line = f"{start_str}~{end_str}s(Shot {i + 1}):{fp.prompt_en}"
+        line = f"[{start:.1f}-{end:.1f}] {fp.prompt_en}"
         if i == len(result.frames) - 1:
             line += "zhuanchang,"
         lines.append(line)
     return "\n".join(lines)
+
+
+def _format_global_cn(result: FramePromptList) -> str:
+    """Extract global Chinese prompt."""
+    return result.global_cn
+
+
+def _format_global_en(result: FramePromptList) -> str:
+    """Extract global English prompt."""
+    return result.global_en

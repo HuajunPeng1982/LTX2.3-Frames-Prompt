@@ -7,10 +7,8 @@ from .gemini_client import generate_prompts
 
 
 class LTX23FramesPrompt:
-    """Generates Chinese/English video prompts with durations for LTX2.3
-    multi-frame video generation, powered by Gemini API.
-
-    Input images are analysed in adjacent pairs: (img1,img2), (img2,img3), ...
+    """输入序列关键帧（首帧→中帧→尾帧），经由 Gemini 兼容 API 生成视频提示词。
+    输出 1 个全局提示词（不变的主体/场景/风格）+ N 个局部提示词（每张参考图一个，描述变化）。
     """
 
     @classmethod
@@ -34,11 +32,9 @@ class LTX23FramesPrompt:
     CATEGORY = "LTX2.3"
     OUTPUT_NODE = True
     DESCRIPTION = (
-        "Generate Chinese & English video prompts with suggested durations "
-        "for LTX2.3 multi-frame generation. Analyses adjacent image pairs "
-        "via Gemini API. Connect 2-16 images, formatted prompt, and user text. "
-        "Outputs per-shot prompts (cn/en) and global prompts (cn/en). "
-        "Connect outputs to ShowText nodes to view results."
+        "输入序列关键帧（首帧→中帧→尾帧），大模型根据用户提示词和结构化提示词，"
+        "输出1个全局提示词（描述不变的主体/场景/风格，50-100词）和若干局部提示词（每张图一个，描述变化）。"
+        "结果连接到 ShowText 节点查看。"
     )
 
     def generate(self, **kwargs):
@@ -74,7 +70,7 @@ class LTX23FramesPrompt:
             output = f"ERROR: At least 2 images required (found {len(images)})."
             status = (
                 f"[开始] LTX2.3 Frames Prompt 生成\n"
-                f"[输入] 图片数量: {len(images)}, 相邻帧对: {len(images) - 1}\n"
+                f"[输入] 图片数量: {len(images)}\n"
                 f"[错误] 至少需要 2 张图片 (实际连接: {len(images)})"
             )
             return {"ui": {"prompts": [output], "status": [status], "prompts_cn": [output], "prompts_en": [output], "global_cn": [output], "global_en": [output]}, "result": (output, status, output, output, output, output)}

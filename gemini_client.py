@@ -18,15 +18,16 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 class FramePrompt(BaseModel):
-    duration_seconds: float = Field(description="Suggested video duration in seconds, typically 2-8")
+    duration_seconds: float = Field(description="Segment display duration in seconds (分段时长), typically 2-8")
+    transition_seconds: float = Field(default=0.0, description="Overlap transition time from previous frame to this frame in seconds (过渡时长). First frame always 0.0")
     prompt_cn: str = Field(description="Detailed Chinese prompt for LTX2.3 video generation")
     prompt_en: str = Field(description="Equivalent English prompt for LTX2.3 video generation")
 
 
 class FramePromptList(BaseModel):
-    frames: list[FramePrompt] = Field(description="List of prompts, one per adjacent frame pair")
-    global_cn: str = Field(default="", description="Global Chinese prompt — consistent elements across the entire video")
-    global_en: str = Field(default="", description="Global English prompt — consistent elements across the entire video")
+    frames: list[FramePrompt] = Field(description="List of prompts, one per input image")
+    global_prompt_cn: str = Field(default="", description="Global Chinese prompt describing the entire video sequence")
+    global_prompt_en: str = Field(default="", description="Global English prompt describing the entire video sequence")
 
 
 # ---------------------------------------------------------------------------
@@ -47,16 +48,36 @@ def _tensor_to_base64(tensor: torch.Tensor) -> str:
 # ---------------------------------------------------------------------------
 
 SYSTEM_INSTRUCTION = (
-    "You are a professional cinematographer and video director. "
-    "Given two consecutive keyframe images and a user's creative direction, "
-    "analyze the transition and describe:\n"
-    "- Camera movement (pan, zoom, dolly, etc.)\n"
-    "- Subject action and motion\n"
-    "- Scene changes and visual effects\n\n"
-    "For each pair, provide:\n"
-    "1. Suggested video duration in seconds (2-8 seconds)\n"
-    "2. A detailed Chinese prompt suitable for LTX2.3 video generation\n"
-    "3. An equivalent English prompt for LTX2.3 video generation"
+    "You are a professional prompt engineer for the LTX2.3 video generation model.\n\n"
+    "## Core Logic\n"
+    "You will receive a SEQUENCE of keyframe images in temporal order "
+    "(首帧→中帧→尾帧). Your task is to produce TWO types of output:\n\n"
+    "### 1. Global Prompt (全局提示词) — 50-100 words\n"
+    'The global prompt describes "what stays UNCHANGED" throughout the entire video. '
+    "It is the foundational setting that ensures consistency across all segments:\n"
+    "- Core subject & identity (gender, age, appearance, clothing, distinctive features)\n"
+    "- Overall scene & environment (location, setting, spatial relationships)\n"
+    "- Visual style & quality (cinematic, realistic, lighting, color tone, resolution)\n"
+    "- Base camera setup (only if consistent across the whole video)\n\n"
+    "The global prompt MUST be concise (50-100 words). "
+    "Do NOT include any time-varying content (actions, camera movements, scene changes).\n\n"
+    "### 2. Local Prompts (局部提示词) — One per input image\n"
+    'Each local prompt describes "what CHANGES" during its specific time segment. '
+    "Write each segment independently, but maintain awareness of its position in the sequence "
+    "(how it connects from the previous frame and leads to the next). "
+    "Priority order: core action > camera movement > facial expression > environment details.\n\n"
+    "For each segment provide:\n"
+    "- duration_seconds: segment display time (2-8s, match the action complexity)\n"
+    "- transition_seconds: overlap blend time from previous segment (first=0.0, others=0.3-2.0s)\n"
+    "- prompt_cn: Chinese prompt describing this segment's action and change\n"
+    "- prompt_en: Equivalent English prompt\n\n"
+    "## LTX2.3 Prompt Style\n"
+    "- Write as a single coherent paragraph (not bullet points), 4-8 descriptive sentences merged into one.\n"
+    "- Camera instruction at the START of every local prompt (固定机位, 缓慢推近, etc.)\n"
+    "- Actions must be concrete and continuous: prefer 'slowly raises hand' over 'raises hand'.\n"
+    "- Use long-tail keyword weighting for subjects: (30岁男性职业讲师:1.3).\n"
+    "- Avoid abstract language, sudden movements ('突然', '立刻'), logos, text, or chaotic physics.\n"
+    "- Chinese and English versions convey the same meaning, not a literal translation."
 )
 
 
@@ -65,44 +86,62 @@ def build_prompt_text(
     prompt_format: str,
     user_text: str,
 ) -> str:
-    """Build the full text prompt (without images — images are sent separately)."""
+    """Build the full text prompt (without images — images are sent separately).
+
+    When prompt_format is provided, it takes priority over the built-in SYSTEM_INSTRUCTION.
+    """
     parts: list[str] = []
 
     if prompt_format.strip():
-        parts.append(f"[System Context]\n{prompt_format.strip()}\n")
-
-    parts.append(SYSTEM_INSTRUCTION)
+        # User-supplied structured prompt has HIGHER priority than SYSTEM_INSTRUCTION
+        parts.append(f"{prompt_format.strip()}\n")
+    else:
+        # Fallback to built-in instruction only when no user prompt_format
+        parts.append(SYSTEM_INSTRUCTION)
 
     if user_text.strip():
-        parts.append(f"\n[User Creative Direction]\n{user_text.strip()}\n")
+        parts.append(f"\n## User Creative Direction\n{user_text.strip()}\n")
 
-    pair_descriptions = []
-    for i in range(image_count - 1):
-        pair_descriptions.append(f"Pair {i + 1}: Image {i + 1} -> Image {i + 2}")
+    # Label images by their sequence position
+    if image_count == 1:
+        labels = ["Image 1 (唯一关键帧)"]
+    elif image_count == 2:
+        labels = ["Image 1 (首帧/起点)", "Image 2 (尾帧/终点)"]
+    else:
+        labels = ["Image 1 (首帧/起点)"]
+        for i in range(1, image_count - 1):
+            labels.append(f"Image {i + 1} (中帧/过程 {i})")
+        labels.append(f"Image {image_count} (尾帧/终点)")
 
     parts.append(
-        f"\nAnalyze the following {len(pair_descriptions)} frame pair(s) sequentially:\n"
-        + "\n".join(pair_descriptions)
+        f"## Input Keyframes (temporal sequence: 首帧 → 中帧 → 尾帧)\n"
+        + "\n".join(labels)
     )
     parts.append(
-        "\nIn addition to the per-frame prompts, also provide a GLOBAL prompt describing "
-        "what remains CONSISTENT across the ENTIRE video (NOT changing over time):\n"
-        "- Subject identity that persists throughout (e.g., 'a male eagle', 'a man wearing sunglasses')\n"
-        "- Overall environment type (e.g., 'urban night scene', 'cozy living room')\n"
-        "- Overall shot language (e.g., 'single continuous push-pull shot', 'cinematic handheld', 'slow dolly')\n"
-        "- Overall lighting mood (e.g., 'neon cool tones', 'warm golden light')\n\n"
-        "CRITICAL RULES for GLOBAL prompt:\n"
-        "1. Only describe what holds TRUE THROUGHOUT the ENTIRE video — no per-segment specifics\n"
-        "2. If subjects differ greatly across segments, keep only the highest-level common description\n"
-        "3. NO temporal/sequential words: first/then/next/finally/zoom in/zoom out/cut to/pan/tilt, etc.\n"
-        "4. NO specific actions or camera movements — only the overall shot style\n"
-        "5. Length: 15-40 Chinese characters for global_cn, 8-25 English words for global_en\n"
-    )
-    parts.append(
-        "\nReturn your response as a JSON object with this exact structure, no other text:\n"
-        '{"frames": [{"duration_seconds": 4.0, "prompt_cn": "...", "prompt_en": "..."}], '
-        '"global_cn": "...", "global_en": "..."}\n'
-        "Important: return ONLY the JSON, no markdown fences, no explanation."
+        "\n## Required JSON Output Format (MUST follow exactly)\n"
+        "Return ONLY a JSON object. No markdown fences, no explanation, no other text.\n\n"
+        "{\n"
+        '  "global_prompt_cn": "全局提示词中文（50-100词，描述不变的主体/场景/风格）",\n'
+        '  "global_prompt_en": "global prompt english (50-100 words, unchanging elements only)",\n'
+        '  "frames": [\n'
+        '    {\n'
+        '      "duration_seconds": 3.0,\n'
+        '      "transition_seconds": 0.0,\n'
+        '      "prompt_cn": "镜头指令+核心动作+表情+环境变化（中文）",\n'
+        '      "prompt_en": "camera instruction + core action + expression + environment (english)"\n'
+        '    },\n'
+        '    ...\n'
+        '  ]\n'
+        '}\n\n'
+        f"Rules:\n"
+        f"- Provide exactly {image_count} frame entries, one per input image.\n"
+        f"- Frame 1 transition_seconds MUST be 0.0. Subsequent frames: 0.3-2.0s.\n"
+        f"- duration_seconds: pure display time for this segment (2-8s, match action complexity).\n"
+        f"- transition_seconds: overlap blend from previous frame to this frame.\n"
+        f"- Each local prompt: start with camera instruction, then action, expression, environment.\n"
+        f"- Global prompt (50-100 words): only unchanging elements — subject, scene, style.\n"
+        f"- Do NOT repeat global content in local prompts.\n"
+        f"- Write each prompt as a coherent paragraph, not bullet points."
     )
 
     return "\n".join(parts)
@@ -120,7 +159,7 @@ def generate_prompts(
     base_url: str,
     model_name: str = "gemini-3.1-pro-preview",
 ) -> tuple[str, str, str, str, str, str]:
-    """Call Gemini API to generate frame transition prompts.
+    """Call Gemini API to generate per-frame prompts.
 
     Returns (output_text, status_text, cn_text, en_text, global_cn, global_en).
     """
@@ -130,7 +169,7 @@ def generate_prompts(
         log.append(msg)
 
     log_add(f"[开始] LTX2.3 Frames Prompt 生成")
-    log_add(f"[输入] 图片数量: {len(images)}, 相邻帧对: {len(images) - 1}")
+    log_add(f"[输入] 图片数量: {len(images)}")
 
     if not api_key.strip():
         err = "ERROR: API key not set."
@@ -242,9 +281,10 @@ def generate_prompts(
             output = _format_output(parsed, len(images))
             cn_output = _format_cn(parsed)
             en_output = _format_en(parsed)
-            global_cn = _format_global_cn(parsed)
-            global_en = _format_global_en(parsed)
-            log_add(f"[完成] 成功生成 {len(parsed.frames)} 个镜头提示词")
+            global_cn = parsed.global_prompt_cn
+            global_en = parsed.global_prompt_en
+            log_add(f"[全局] 全局中文提示词长度: {len(global_cn)} 字符, 全局英文提示词长度: {len(global_en)} 字符")
+            log_add(f"[完成] 成功生成 {len(parsed.frames)} 个局部提示词 + 1 个全局提示词")
             return (output, "\n".join(log), cn_output, en_output, global_cn, global_en)
 
         except Exception as exc:
@@ -270,7 +310,7 @@ def _format_output(result: FramePromptList, image_count: int) -> str:
     """Format structured response into the combined display format."""
     lines: list[str] = []
     for i, fp in enumerate(result.frames):
-        lines.append(f"{i + 1}. 镜头{i + 1}（图片{i + 1}-图片{i + 2}）时长：{fp.duration_seconds}s")
+        lines.append(f"{i + 1}. 镜头{i + 1}（图片{i + 1}）时长：{fp.duration_seconds}s")
         lines.append(f"   [中文] {fp.prompt_cn}")
         lines.append(f"   [EN]   {fp.prompt_en}")
         lines.append("")
@@ -281,32 +321,22 @@ def _format_cn(result: FramePromptList) -> str:
     """Format Chinese-only prompts for side-by-side display."""
     lines: list[str] = []
     for i, fp in enumerate(result.frames):
-        lines.append(f"镜头{i + 1}（图片{i + 1}-图片{i + 2}）时长：{fp.duration_seconds}s")
+        lines.append(f"镜头{i + 1}（图片{i + 1}）时长：{fp.duration_seconds}s")
         lines.append(fp.prompt_cn)
         lines.append("")
     return "\n".join(lines).strip()
 
 
 def _format_en(result: FramePromptList) -> str:
-    """Format English-only prompts with cumulative time ranges."""
+    """Format English prompts as a table with cumulative time ranges and transition durations."""
     lines: list[str] = []
+    lines.append("| Segment | Start | End | Transition | Prompt |")
+    lines.append("|---------|-------|-----|------------|--------|")
     cumulative = 0.0
     for i, fp in enumerate(result.frames):
         start = cumulative
         end = cumulative + fp.duration_seconds
         cumulative = end
-        line = f"[{start:.1f}-{end:.1f}] {fp.prompt_en}"
-        if i == len(result.frames) - 1:
-            line += "zhuanchang,"
-        lines.append(line)
+        t = fp.transition_seconds
+        lines.append(f"| {i + 1} | {start:.1f} | {end:.1f} | {t:.1f} | {fp.prompt_en} |")
     return "\n".join(lines)
-
-
-def _format_global_cn(result: FramePromptList) -> str:
-    """Extract global Chinese prompt."""
-    return result.global_cn
-
-
-def _format_global_en(result: FramePromptList) -> str:
-    """Extract global English prompt."""
-    return result.global_en

@@ -338,5 +338,6 @@ def _format_en(result: FramePromptList) -> str:
         end = cumulative + fp.duration_seconds
         cumulative = end
         t = fp.transition_seconds
-        lines.append(f"| {i + 1} | {start:.1f} | {end:.1f} | {t:.1f} | {fp.prompt_en} |")
+        zhuanchang = ",zhuanchang" if i < len(result.frames) - 1 else ""
+        lines.append(f"| {i + 1} | {start:.1f} | {end:.1f} | {t:.1f} | {fp.prompt_en}{zhuanchang} |")
     return "\n".join(lines)

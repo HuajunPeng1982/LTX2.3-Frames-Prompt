@@ -157,7 +157,7 @@ def generate_prompts(
     user_text: str,
     api_key: str,
     base_url: str,
-    model_name: str = "gemini-3.1-pro-preview",
+    model_name: str = "gemini-3.1-pro",
 ) -> tuple[str, str, str, str, str, str]:
     """Call Gemini API to generate per-frame prompts.
 

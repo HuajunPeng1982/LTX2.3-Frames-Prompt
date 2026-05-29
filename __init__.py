@@ -7,6 +7,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "LTX23FramesPrompt": "LTX2.3 Frames Prompt",
+    "LTX23FramesPrompt": "LTX2.3 Frames Prompt(Grsai)",
 }
 

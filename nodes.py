@@ -17,13 +17,13 @@ class LTX23FramesPrompt:
             "image_1": ("IMAGE",),
             "prompt_format": ("STRING", {"multiline": True, "default": ""}),
             "user_text": ("STRING", {"multiline": True, "default": ""}),
-            "api_key": ("STRING", {"default": ""}),
-            "base_url": ("STRING", {"default": "https://ai.t8star.org"}),
+            "api_key": ("STRING", {"default": "sk-bfa54d894b3046c69721a072c6e03c89"}),
+            "base_url": ("STRING", {"default": "https://grsai.dakka.com.cn"}),
         }
         optional = {}
         for i in range(2, 17):
             optional[f"image_{i}"] = ("IMAGE",)
-        optional["model_name"] = ("STRING", {"default": "gemini-3.1-pro-preview"})
+        optional["model_name"] = (["gemini-3.1-pro", "gpt-5.5", "gpt-5.4"], {"default": "gemini-3.1-pro"})
         return {"required": required, "optional": optional}
 
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING")
@@ -78,8 +78,8 @@ class LTX23FramesPrompt:
         prompt_format = kwargs.get("prompt_format", "")
         user_text = kwargs.get("user_text", "")
         api_key = kwargs.get("api_key", "")
-        base_url = kwargs.get("base_url", "https://ai.t8star.org")
-        model_name = kwargs.get("model_name", "gemini-3.1-pro-preview")
+        base_url = kwargs.get("base_url", "https://grsai.dakka.com.cn")
+        model_name = kwargs.get("model_name", "gemini-3.1-pro")
 
         output, status, cn_output, en_output, global_cn, global_en = generate_prompts(
             images=images,
